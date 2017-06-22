@@ -5,8 +5,82 @@
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 //----------------------------------------------------------------------------------------------------------------------
-// Window Handline
+// Basic typedefs
+//----------------------------------------------------------------------------------------------------------------------
+
+typedef INT8    i8;
+typedef INT16   i16;
+typedef INT32   i32;
+typedef INT64   i64;
+
+typedef UINT8   u8;
+typedef UINT16  u16;
+typedef UINT32  u32;
+typedef UINT64  u64;
+
+typedef float   f32;
+typedef double  f64;
+
+typedef char    bool;
+
+#define YES 1
+#define NO 0
+#define BOOL(x) ((x) ? YES : NO)
+
+//----------------------------------------------------------------------------------------------------------------------
+// Data loading
+//----------------------------------------------------------------------------------------------------------------------
+
+typedef struct Data
+{
+    const u8*   buffer;
+    i64         size;
+    HANDLE      file;
+    HANDLE      fileMap;
+}
+Data;
+
+void dataUnload(Data);
+
+Data dataLoad(const char* fileName)
+{
+    Data d = { 0 };
+
+    d.file = CreateFileA(fileName, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
+    if (d.file)
+    {
+        DWORD fileSizeHigh, fileSizeLow;
+        fileSizeLow = GetFileSize(d.file, &fileSizeHigh);
+        d.fileMap = CreateFileMappingA(d.file, 0, PAGE_READONLY, fileSizeHigh, fileSizeLow, 0);
+
+        if (d.fileMap)
+        {
+            d.buffer = MapViewOfFile(d.fileMap, FILE_MAP_READ, 0, 0, 0);
+            d.size = ((i64)fileSizeHigh << 32) | fileSizeLow;
+        }
+        else
+        {
+            dataUnload(d);
+        }
+    }
+
+    return d;
+}
+
+void dataUnload(Data data)
+{
+    if (data.buffer)    UnmapViewOfFile(data.buffer);
+    if (data.fileMap)   CloseHandle(data.fileMap);
+    if (data.file)      CloseHandle(data.file);
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+// Window handling
+//----------------------------------------------------------------------------------------------------------------------
 
 HWND gWnd;
 
@@ -72,6 +146,7 @@ int run()
 
 //----------------------------------------------------------------------------------------------------------------------
 // WinMain
+//----------------------------------------------------------------------------------------------------------------------
 
 int WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int cmdShow)
 {
@@ -79,3 +154,5 @@ int WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int cmdShow)
     return run();
 }
 
+//----------------------------------------------------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------------------------------
