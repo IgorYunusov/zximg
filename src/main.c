@@ -11,9 +11,9 @@
 #include <time.h>
 #include <stdint.h>
 
-#define POPULATION_SIZE     1000
+#define POPULATION_SIZE     100
 #define CROSSOVER_CHANCE    0.7
-#define MUTATION_CHANCE     0.001
+#define MUTATION_CHANCE     0.01
 
 //----------------------------------------------------------------------------------------------------------------------
 // Basic typedefs
@@ -37,55 +37,6 @@ typedef char    bool;
 #define YES 1
 #define NO 0
 #define MAKE_BOOL(x) ((x) ? YES : NO)
-
-//----------------------------------------------------------------------------------------------------------------------
-// Genetic Algorithm
-// Our lifeforms, scrims, describe a screen
-//----------------------------------------------------------------------------------------------------------------------
-
-typedef struct
-{
-    u8      genomes[6912 * POPULATION_SIZE];
-    i64     errors[POPULATION_SIZE];
-    i64     total;
-    i64     bestError;
-    i64     indexBest;
-}
-Population;
-
-Population gPopA, gPopB;
-Population* gCurrentPop;
-Population* gFuturePop;
-
-void generateScrim(u8* bytes)
-{
-    static bool seeded = NO;
-    if (!seeded)
-    {
-        // Ensure we seed the random number generator only once.
-        srand((unsigned int)time(NULL));
-        seeded = YES;
-    }
-    for (int i = 0; i < 6912; ++i)
-    {
-        *bytes++ = (u8)rand();
-    }
-}
-
-void generatePopulation(Population *pop)
-{
-    int offset = 0;
-    for (int i = 0; i < POPULATION_SIZE; ++i)
-    {
-        generateScrim(&pop->genomes[offset]);
-        offset += 6912;
-        pop->errors[i] = 0;
-    }
-
-    pop->total = 0;
-    pop->bestError = INT64_MAX;
-    pop->indexBest = -1;
-}
 
 //----------------------------------------------------------------------------------------------------------------------
 // Image handling
@@ -118,7 +69,7 @@ void imageDestroy(Image* img)
     free(img);
 }
 
-Image* imageZxCreate(u8* bytes)
+Image* imageZxConvert(Image* img, u8* bytes)
 {
     static const u32 colours[16] =
     {
@@ -126,7 +77,6 @@ Image* imageZxCreate(u8* bytes)
         0x000000, 0x0000ff, 0xff0000, 0xff00ff, 0x00ff00, 0x00ffff, 0xffff00, 0xffffff,
     };
 
-    Image* img = imageCreate(256, 192);
     u8* pixels = bytes;
     u8* attr = bytes + 6144;
     int p = 0;
@@ -163,6 +113,185 @@ Image* imageZxCreate(u8* bytes)
     } // whole screen
 
     return img;
+}
+
+//----------------------------------------------------------------------------------------------------------------------
+// Genetic Algorithm
+// Our lifeforms, scrims, describe a screen
+//----------------------------------------------------------------------------------------------------------------------
+
+Image* gTargetImage = 0;
+
+typedef struct
+{
+    u8      genomes[6912 * POPULATION_SIZE];
+    i64     errors[POPULATION_SIZE];
+    i64     total;
+    i64     bestScore;
+    i64     worseScore;
+    i64     indexBest;
+}
+Population;
+
+Population gPopA, gPopB;
+Population* gCurrentPop;
+Population* gFuturePop;
+
+void generateScrim(u8* bytes)
+{
+    static bool seeded = NO;
+    if (!seeded)
+    {
+        // Ensure we seed the random number generator only once.
+        srand((unsigned int)time(NULL));
+        seeded = YES;
+    }
+    for (int i = 0; i < 6912; ++i)
+    {
+        *bytes++ = (u8)rand();
+    }
+}
+
+void generatePopulation(Population *pop)
+{
+    int offset = 0;
+    for (int i = 0; i < POPULATION_SIZE; ++i)
+    {
+        generateScrim(&pop->genomes[offset]);
+        offset += 6912;
+        pop->errors[i] = 0;
+    }
+
+    pop->total = 0;
+    pop->indexBest = -1;
+}
+
+i64 checkError(Image* targetImg, u8* genome)
+{
+    static Image* img = 0;
+    i64 total = 0;
+
+    if (!img)
+    {
+        img = imageCreate(256, 192);
+    }
+
+    imageZxConvert(img, genome);
+
+    for (int i = 0; i < (256 * 192); ++i)
+    {
+        total += abs(img->pixels[i] - targetImg->pixels[i]);
+    }
+
+    return total;
+}
+
+i64 chooseParent(Population* pop)
+{
+    i64 r = ((i64)rand() << 32 ^ (i64)rand()) % pop->total;
+    i64 min = 0;
+    i64 max = POPULATION_SIZE - 1;
+    i64 index = -1;
+
+    for(;;)
+    {
+        index = ((min + max) / 2);
+
+        if (pop->errors[index] < r)
+        {
+            if ((index == POPULATION_SIZE - 1) || (pop->errors[index + 1] > r))
+            {
+                return index;
+            }
+            min = index + 1;
+            if (min >= POPULATION_SIZE) min = POPULATION_SIZE;
+        }
+        else
+        {
+            max = index - 1;
+            if (max < 0) max = 0;
+        }
+    }
+}
+
+u8 mutate(u8 b)
+{
+    f32 r = (f32)rand() / (f32)RAND_MAX;
+    if (r < MUTATION_CHANCE)
+    {
+        int r = rand() % 8;
+        b ^= (1 << r);
+    }
+
+    return b;
+}
+
+void generate(Population* curPop, Population* futurePop)
+{
+    // First calculate the errors of the current population
+    curPop->total = 0;
+    curPop->worseScore = 0;
+    for (int i = 0, offset = 0; i < POPULATION_SIZE; ++i, offset += 6912)
+    {
+        i64 t = checkError(gTargetImage, &curPop->genomes[offset]);
+        if (curPop->indexBest == -1 || t < curPop->bestScore)
+        {
+            curPop->bestScore = t;
+            curPop->indexBest = i;
+        }
+        if (t > curPop->worseScore)
+        {
+            curPop->worseScore = t;
+        }
+        curPop->errors[i] = curPop->total;
+        curPop->total += t;
+    }
+    curPop->total = 0;
+
+    // Now convert the errors so that the smallest are the largest, and vice versa
+    for (int i = 0; i < POPULATION_SIZE; ++i)
+    {
+        curPop->errors[i] = curPop->worseScore - curPop->errors[i];
+        curPop->total += curPop->errors[i];
+    }
+
+    // Now we generate next population
+    for (int i = 0, offset = 0; i < POPULATION_SIZE; ++i, offset += 6912)
+    {
+        i64 parents[2];
+        for (int p = 0; p < 2; ++p)
+        {
+            parents[p] = chooseParent(curPop);
+        }
+
+        // Decide whether to do cross-over or not
+        {
+            f32 chance = (f32)rand() / (f32)RAND_MAX;
+            if (chance < CROSSOVER_CHANCE)
+            {
+                int r = rand() % 6912;
+                int i = 0;
+                for (; i <= r; ++i)
+                {
+                    u8 b = mutate(curPop->genomes[parents[0] * 6912 + i]);
+                    futurePop->genomes[offset + i] = b;
+                }
+                for (; i < 6912; ++i)
+                {
+                    u8 b = mutate(curPop->genomes[parents[1] * 6912 + i]);
+                    futurePop->genomes[offset + i] = b;
+                }
+            }
+            else
+            {
+                int r = rand() % 2;
+                for (int i = 0; i < 6912; ++i)
+                {
+                    futurePop->genomes[offset + i] = mutate(curPop->genomes[parents[r] * 6912 + i]);
+                }
+            }
+        }
+    }
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -353,11 +482,45 @@ void createWindow(HINSTANCE inst)
 int run()
 {
     MSG msg;
+    int generation = 0;
+    bool quit = NO;
 
-    while (GetMessageA(&msg, 0, 0, 0))
+    while(!quit)
     {
-        TranslateMessage(&msg);
-        DispatchMessageA(&msg);
+        // Flush windows queue
+        while (PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE))
+        {
+            if (!GetMessageA(&msg, 0, 0, 0))
+            {
+                quit = YES;
+                break;
+            }
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+
+        // Do one generation
+        {
+            char buffer[32];
+            snprintf(buffer, 32, "Generation: %d", generation);
+            SetWindowTextA(gWnd, buffer);
+        }
+        generate(gCurrentPop, gFuturePop);
+
+        //if (generation % 50 == 0)
+        {
+            imageZxConvert(gImage, &gCurrentPop->genomes[gCurrentPop->indexBest * 6912]);
+            InvalidateRect(gWnd, 0, FALSE);
+        }
+
+        {
+            Population* t = gCurrentPop;
+            gCurrentPop = gFuturePop;
+            gFuturePop = t;
+        }
+
+        ++generation;
+
     }
 
     return (int)msg.wParam;
@@ -369,17 +532,32 @@ int run()
 
 int WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int cmdShow)
 {
-//     {
-//         Data scr = dataLoad("SabreWulf.scr");
-//         gImage = imageZxCreate(scr.buffer);
-//         dataUnload(scr);
-//     }
+    // Load target image
+    {
+        Data img = dataLoad("img1.jpg");
+        int width, height, type;
+        u8* imgData = 0;
+
+        gImage = imageCreate(256, 192);
+        gTargetImage = imageCreate(256, 192);
+        imgData = stbi_load_from_memory(img.buffer, (int)img.size, &width, &height, &type, 4);
+        if (width != 256 || height != 192) return 1;
+        memcpy(gTargetImage->pixels, imgData, width*height * sizeof(u32));
+        for (int i = 0; i < width*height; ++i)
+        {
+            u32 p = gTargetImage->pixels[i];
+            p = (p & 0xff00ff00) | ((p & 0x00ff0000) >> 16) | ((p & 0x000000ff) << 16);
+            gTargetImage->pixels[i] = p;
+        }
+        STBI_FREE(imgData);
+        dataUnload(img);
+    }
 
     gCurrentPop = &gPopA;
     gFuturePop = &gPopB;
     generatePopulation(gCurrentPop);
 
-    gImage = imageZxCreate(&gCurrentPop->genomes[0]);
+    //imageZxConvert(gImage, &gCurrentPop->genomes[0]);
 
     createWindow(inst);
 
