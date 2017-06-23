@@ -8,6 +8,12 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
+#include <time.h>
+
+#define POPULATION_SIZE     1000
+#define CROSSOVER_CHANCE    0.7
+#define MUTATION_CHANCE     0.001
+
 //----------------------------------------------------------------------------------------------------------------------
 // Basic typedefs
 //----------------------------------------------------------------------------------------------------------------------
@@ -30,6 +36,26 @@ typedef char    bool;
 #define YES 1
 #define NO 0
 #define MAKE_BOOL(x) ((x) ? YES : NO)
+
+//----------------------------------------------------------------------------------------------------------------------
+// Genetic Algorithm
+// Our lifeforms, scrims, describe a screen
+//----------------------------------------------------------------------------------------------------------------------
+
+void generateScrim(u8* bytes)
+{
+    static bool seeded = NO;
+    if (!seeded)
+    {
+        // Ensure we seed the random number generator only once.
+        srand((unsigned int)time(NULL));
+        seeded = YES;
+    }
+    for (int i = 0; i < 6912; ++i)
+    {
+        *bytes++ = (u8)rand();
+    }
+}
 
 //----------------------------------------------------------------------------------------------------------------------
 // Image handling
@@ -269,7 +295,7 @@ void createWindow(HINSTANCE inst)
 {
     WNDCLASSEXA wc = { 0 };
     int style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE;
-    const int scale = 2;
+    const int scale = 3;
     RECT r = { 0, 0, 8 * 32 * scale, 8 * 24 * scale };
 
     wc.cbSize = sizeof(WNDCLASSEXA);
@@ -313,11 +339,15 @@ int run()
 
 int WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int cmdShow)
 {
-    {
-        Data scr = dataLoad("WizBall.scr");
-        gImage = imageZxCreate(scr.buffer);
-        dataUnload(scr);
-    }
+//     {
+//         Data scr = dataLoad("SabreWulf.scr");
+//         gImage = imageZxCreate(scr.buffer);
+//         dataUnload(scr);
+//     }
+
+    u8 scr[6912];
+    generateScrim(scr);
+    gImage = imageZxCreate(scr);
 
     createWindow(inst);
 
