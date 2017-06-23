@@ -9,6 +9,7 @@
 #include <stb_image.h>
 
 #include <time.h>
+#include <stdint.h>
 
 #define POPULATION_SIZE     1000
 #define CROSSOVER_CHANCE    0.7
@@ -42,6 +43,20 @@ typedef char    bool;
 // Our lifeforms, scrims, describe a screen
 //----------------------------------------------------------------------------------------------------------------------
 
+typedef struct
+{
+    u8      genomes[6912 * POPULATION_SIZE];
+    i64     errors[POPULATION_SIZE];
+    i64     total;
+    i64     bestError;
+    i64     indexBest;
+}
+Population;
+
+Population gPopA, gPopB;
+Population* gCurrentPop;
+Population* gFuturePop;
+
 void generateScrim(u8* bytes)
 {
     static bool seeded = NO;
@@ -55,6 +70,21 @@ void generateScrim(u8* bytes)
     {
         *bytes++ = (u8)rand();
     }
+}
+
+void generatePopulation(Population *pop)
+{
+    int offset = 0;
+    for (int i = 0; i < POPULATION_SIZE; ++i)
+    {
+        generateScrim(&pop->genomes[offset]);
+        offset += 6912;
+        pop->errors[i] = 0;
+    }
+
+    pop->total = 0;
+    pop->bestError = INT64_MAX;
+    pop->indexBest = -1;
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -345,9 +375,11 @@ int WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int cmdShow)
 //         dataUnload(scr);
 //     }
 
-    u8 scr[6912];
-    generateScrim(scr);
-    gImage = imageZxCreate(scr);
+    gCurrentPop = &gPopA;
+    gFuturePop = &gPopB;
+    generatePopulation(gCurrentPop);
+
+    gImage = imageZxCreate(&gCurrentPop->genomes[0]);
 
     createWindow(inst);
 
