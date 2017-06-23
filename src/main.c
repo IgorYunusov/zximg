@@ -62,7 +62,7 @@ void imageDestroy(Image* img)
     free(img);
 }
 
-Image* createZXImage(u8* bytes)
+Image* imageZxCreate(u8* bytes)
 {
     static const u32 colours[16] =
     {
@@ -72,36 +72,38 @@ Image* createZXImage(u8* bytes)
 
     Image* img = imageCreate(256, 192);
     u8* pixels = bytes;
-    u8* attr = bytes + 6912;
+    u8* attr = bytes + 6144;
     int p = 0;
 
     for (int section = 0; section < 3; ++section)
     {
-        for (int pixRow = 0; pixRow < 7; ++pixRow)
+        int ppp = p;
+        for (int pixRow = 0; pixRow < 8; ++pixRow)
         {
             int pp = p;
 
-            for (int row = 0; row < 7; ++row)
+            for (int row = 0; row < 8; ++row)
             {
                 for (int x = 0; x < 32; ++x)
                 {
-                    int i;
                     int b = *pixels++;
+                    int i;
                     u8 colour = attr[(section * 8 + row) * 32 + x];
-                    u32 ink = (colour & 7) + ((colour & 0x40) >> 3);
-                    u32 paper = (colour & 0x7f) >> 3;
+                    u32 ink = colours[(colour & 7) + ((colour & 0x40) >> 3)];
+                    u32 paper = colours[(colour & 0x7f) >> 3];
 
                     for (i = 7; i >= 0; --i)
                     {
                         img->pixels[p + i] = (b & 1) ? ink : paper;
+                        b >>= 1;
                     }
                     p += 8;
                 } // end of pixel row
                 p += (7 * 256);
             } // end of section
-
             p = pp + 256;
         } // all intermediate rows
+        p = ppp + (8 * 8 * 256);
     } // whole screen
 
     return img;
@@ -113,10 +115,10 @@ Image* createZXImage(u8* bytes)
 
 typedef struct Data
 {
-    const u8*   buffer;
-    i64         size;
-    HANDLE      file;
-    HANDLE      fileMap;
+    u8*     buffer;
+    i64     size;
+    HANDLE  file;
+    HANDLE  fileMap;
 }
 Data;
 
@@ -170,7 +172,7 @@ typedef struct
 }
 Win32OffscreenBuffer;
 
-void resizeDIBSection(Win32OffscreenBuffer* buffer, int width, int height)
+void resizeDIBSection(Win32OffscreenBuffer* buffer, int width, int height, void* img, int stride)
 {
     int bitmapMemorySize;
 
@@ -188,16 +190,24 @@ void resizeDIBSection(Win32OffscreenBuffer* buffer, int width, int height)
     buffer->info.bmiHeader.biBitCount = 32;
     buffer->info.bmiHeader.biClrImportant = BI_RGB;
 
-    bitmapMemorySize = (width * height) * BPP;
-    buffer->memory = VirtualAlloc(0, bitmapMemorySize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-
-    // Memory is xxRRGGBB
-    for (int i = 0; i < (width * height); ++i)
+    if (img)
     {
-        ((u32 *)buffer->memory)[i] = 0;
+        buffer->memory = img;
+        buffer->stride = stride;
     }
+    else
+    {
+        bitmapMemorySize = (width * height) * BPP;
+        buffer->memory = VirtualAlloc(0, bitmapMemorySize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 
-    buffer->stride = width * BPP;
+        // Memory is xxRRGGBB
+        for (int i = 0; i < (width * height); ++i)
+        {
+            ((u32 *)buffer->memory)[i] = 0;
+        }
+
+        buffer->stride = width * BPP;
+    }
 }
 
 void displayBuffer(Win32OffscreenBuffer* buffer, HDC dc, int windowWidth, int windowHeight)
@@ -218,6 +228,7 @@ void displayBuffer(Win32OffscreenBuffer* buffer, HDC dc, int windowWidth, int wi
 
 HWND gWnd;
 Win32OffscreenBuffer gScreen;
+Image* gImage = 0;
 int gWindowWidth, gWindowHeight;
 
 LRESULT CALLBACK winProc(HWND wnd, UINT msg, WPARAM w, LPARAM l)
@@ -227,7 +238,7 @@ LRESULT CALLBACK winProc(HWND wnd, UINT msg, WPARAM w, LPARAM l)
     case WM_SIZE:
         gWindowWidth = LOWORD(l);
         gWindowHeight = HIWORD(l);
-        resizeDIBSection(&gScreen, 32 * 8, 24 * 8);
+        resizeDIBSection(&gScreen, 32 * 8, 24 * 8, gImage->pixels, 32 * 8);
         break;
 
     case WM_PAINT:
@@ -258,7 +269,8 @@ void createWindow(HINSTANCE inst)
 {
     WNDCLASSEXA wc = { 0 };
     int style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE;
-    RECT r = { 0, 0, 8 * 32, 8 * 24 };
+    const int scale = 2;
+    RECT r = { 0, 0, 8 * 32 * scale, 8 * 24 * scale };
 
     wc.cbSize = sizeof(WNDCLASSEXA);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -301,7 +313,14 @@ int run()
 
 int WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmdLine, int cmdShow)
 {
+    {
+        Data scr = dataLoad("WizBall.scr");
+        gImage = imageZxCreate(scr.buffer);
+        dataUnload(scr);
+    }
+
     createWindow(inst);
+
     return run();
 }
 

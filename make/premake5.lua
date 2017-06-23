@@ -13,7 +13,7 @@ solution "zximg"
 	configurations { "Debug", "Release" }
 	platforms { "Win64" }
 	location "../_build"
-    --debugdir "../data"
+    debugdir "../data"
     characterset "MBCS"
 
 	defines {
